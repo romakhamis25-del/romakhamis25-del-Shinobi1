@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-import sys
 import os
+import sys
 import time
+import shutil
 
+# ألوان الطرفية الاحترافية
 MAGENTA = "\033[1;35m"
 YELLOW = "\033[1;33m"
 GREEN = "\033[1;32m"
@@ -11,71 +13,80 @@ CYAN = "\033[1;36m"
 BLUE = "\033[1;34m"
 RESET = "\033[0m"
 
-print(f"{MAGENTA}")
-print("  ██████  ██   ██ ██ ███    ██  ██████  ██████  ██ ")
-print(" ██       ██   ██ ██ ████   ██ ██    ██ ██   ██ ██ ")
-print("  █████   ███████ ██ ██ ██  ██ ██    ██ ██████  ██ ")
-print("      ██  ██   ██ ██ ██  ██ ██ ██    ██ ██   ██ ██ ")
-print(" ██████   ██   ██ ██ ██   ████  ██████  ██████  ██ ")
-print(f"       === SHINOBI INTELLIGENT RECOGNITION PIPELINE === {RESET}\n")
+def print_banner():
+    print(f"{MAGENTA}")
+    print(" ██████  ██    ██  ██████  ██    ██  ██████  ███████  ██████  ██ ")
+    print(" ██      ██    ██  ██   ██ ███   ██  ██   ██ ██      ██       ██ ")
+    print(" █████   ██    ██  ██████  ██ ██ ██  ██   ██ █████   ██   ███ ██ ")
+    print(" ██      ██    ██  ██   ██ ██  ████  ██   ██ ██      ██    ██ ██ ")
+    print(" ██       ██████   ██████  ██   ███  ██████  ███████  ██████  ██ ")
+    print(f" === SHINOBI INTELLIGENT PIPELINE (Root Mode Enabled) === {RESET}\n")
 
-try:
-    TARGET = input(f"{YELLOW}[?] Enter the target domain/URL to fully audit: {RESET}").strip()
-    if not TARGET:
-        print(f"{RED}[-] Error: Target cannot be empty.{RESET}")
+def check_root():
+    """التحقق من صلاحيات الجذر (sudo) لضمان عمل الفحص الشامل"""
+    if os.geteuid() != 0:
+        print(f"{RED}[-] خطأ: يجب تشغيل هذه الأداة بصلاحيات الجذر (Root).{RESET}")
+        print(f"{YELLOW}[!] يرجى التشغيل باستخدام: sudo python3 shinobi.py{RESET}")
         sys.exit(1)
-except KeyboardInterrupt:
-    print(f"\n{RED}[-] Aborted by user.{RESET}")
-    sys.exit(0)
 
-import katana_pipeline
-import nmap_pipeline
-import sqlmap_pipeline
-import gizo_ai_engine
+def main():
+    check_root()
+    print_banner()
+    
+    try:
+        target = input(f"{YELLOW}[?] أدخل النطاق أو الهدف المراد فحصه (مثال: example.com): {RESET}").strip()
+        if not target:
+            print(f"{RED}[-] خطأ: لا يمكن ترك الهدف فارغاً.{RESET}")
+            sys.exit(1)
+    except KeyboardInterrupt:
+        print(f"\n{RED}[-] تم الإلغاء بواسطة المستخدم.{RESET}")
+        sys.exit(0)
 
-# 1. تشغيل أداة كاتانا المتطورة وجمع المسارات ملوّنة بأكواد الحالة
-urls = katana_pipeline.run_katana(TARGET)
+    # إنشاء مجلد مخصص لمخرجات هذا الفحص
+    output_dir = f"shinobi_output_{target.replace('.', '_')}"
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"{GREEN}[+] تم إنشاء مجلد المخرجات: {output_dir}{RESET}\n")
 
-# 2. تشغيل فحص المنافذ والخدمات الحية (Nmap)
-ports = nmap_pipeline.run_nmap(TARGET)
+    # استيراد وحدات خط الأنابيب
+    import nmap_pipeline
+    import katana_pipeline
+    import nuclei_pipeline
+    import sqlmap_pipeline
+    import gizo_ai_engine
 
-# 3. تشغيل مصفوفة هجوم الـ Sqlmap المضادة لحجب جدران الحماية
-sqlmap_pipeline.run_sqlmap(urls)
+    print(f"{CYAN}{'='*60}")
+    print(f" بدء دورة حياة الاختراق الآلية (5 مراحل) للهدف: {target}")
+    print(f"{'='*60}{RESET}\n")
 
-# ==========================================
-# ADVANCED CYBER THREAT FORENSICS (المحلل الجنائي للثلاثي الخطر)
-# ==========================================
-print(f"\n{CYAN}[SHINOBI DEEP FORENSICS] Parsing Triad Matrices (Katana + Nmap + Sqlmap)...{RESET}")
-time.sleep(1)
+    # المرحلة 1: فحص المنافذ والخدمات (Nmap) - يجب أن يكون أولاً
+    print(f"{BLUE}[Stage 1] بدء الفحص الشامل للشبكة والخدمات (Nmap Brute-Force Mode)...{RESET}")
+    nmap_pipeline.run_nmap(target, output_dir)
+    time.sleep(1)
 
-# تحليل ذكي وحرفي للمخرجات المشتركة لتحديد نوع الثغرة الدقيق
-ports_str = "".join(ports).lower()
+    # المرحلة 2: زحف الويب واكتشاف المعلمات (Katana)
+    print(f"{BLUE}[Stage 2] بدء زحف الويب واكتشاف المسارات والمعلمات (Katana)...{RESET}")
+    urls_with_params = katana_pipeline.run_katana(target, output_dir)
+    time.sleep(1)
 
-print(f"\n{MAGENTA}================= SHINOBI INTELLIGENT THREAT REPORT ================{RESET}")
-print(f"{BLUE}[1] Infrastructure Service Analyzed:{RESET} Apache Traffic Server / Operating System Nodes detected via Nmap.")
+    # المرحلة 3: فحص الثغرات المعروفة (Nuclei)
+    print(f"{BLUE}[Stage 3] بدء فحص الثغرات المعروفة وإعدادات الخادم الخاطئة (Nuclei)...{RESET}")
+    nuclei_pipeline.run_nuclei(target, output_dir)
+    time.sleep(1)
 
-# تحليل رد فعل جدار الحماية لتحديد الثغرة بالحرف
-print(f"{BLUE}[2] Sqlmap Behavioral Feedback:{RESET} Triggered HTTP 500/403 Error Codes -> Active Web Application Firewall (WAF) Detected.")
+    # المرحلة 4: الاستغلال المستهدف (Sqlmap) - مشروط بوجود معلمات
+    print(f"{BLUE}[Stage 4] تقييم إمكانية حقن SQL (Sqlmap)...{RESET}")
+    if urls_with_params:
+        print(f"{YELLOW}[!] تم اكتشاف {len(urls_with_params)} رابط يحتوي على معلمات. بدء فحص Sqlmap المكثف.{RESET}")
+        sqlmap_pipeline.run_sqlmap(urls_with_params, output_dir)
+    else:
+        print(f"{GREEN}[+] لم يتم اكتشاف معلمات URL قابلة للحقن. تخطي مرحلة Sqlmap بأمان.{RESET}")
+    time.sleep(1)
 
-# تحديد الثغرة الدقيقة والحل الممتثل بالحرف بناءً على السلوك المجمّع
-identified_vuln_class = "Improper Input Validation leading to Blind SQL Injection Vulnerability"
-specific_cve_profile = "CWE-89: Improper Neutralization of Special Elements used in an SQL Command"
-mitigation_directive = "Enforce Parameterized Queries, Sanitize Inputs, and Update Apache Infrastructure Rules."
+    # المرحلة 5: التحليل الجنائي والذكاء الاصطناعي (Gizo AI)
+    print(f"{MAGENTA}[Stage 5] تشغيل محرك Gizo AI لتحليل المخرجات وتوليد تقرير ISO 27001...{RESET}")
+    gizo_ai_engine.process_gizo_core(target, output_dir)
 
-print(f"{RED}[!] CRISIS CLASSIFICATION:{RESET} {identified_vuln_class}")
-print(f"{RED}[!] SPECIFIC THREAT PROFILE:{RESET} {specific_cve_profile}")
-print(f"{GREEN}[+] REMEDIATION DIRECTIVE:{RESET} {mitigation_directive}")
-print(f"{MAGENTA}===================================================================={RESET}")
+    print(f"\n{GREEN}[*] اكتملت عملية خط الأنابيب بنجاح. تم حفظ جميع التقارير في: {output_dir}{RESET}")
 
-# 5. تمرير البيانات النهائية المنسقة لنواة جيزو لإصدار تقرير ISO الدولي
-report_path = gizo_ai_engine.process_gizo_core(TARGET, ports, len(urls))
-
-# تنظيف شامل للبيانات المؤقتة لمسح الأثر والحفاظ على النفق نظيفاً
-for temp in ["katana_output.txt", "nmap_output.txt"]:
-    if os.path.exists(temp):
-        os.remove(temp)
-import shutil
-if os.path.exists("sqlmap_res"):
-    shutil.rmtree("sqlmap_res")
-
-print(f"\n{BLUE}[*] Pipeline operational clean complete. All execution logs purged safely.{RESET}")
+if __name__ == "__main__":
+    main()

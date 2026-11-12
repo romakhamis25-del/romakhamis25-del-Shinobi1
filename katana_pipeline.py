@@ -4,18 +4,29 @@ import os
 
 def run_katana(target, output_dir):
     output_file = os.path.join(output_dir, "katana_urls.txt")
-    print(f"    [*] جاري زحف الويب لاكتشاف المسارات والمعلمات للهدف: {target}")
+    print(f"    [*] Initiating deep web crawl on target: {target}")
     
-    # تشغيل Katana بعمق 3 مستويات وإخراج النتائج لملف
+    # خيارات Katana المتقدمة للقوة القصوى:
+    # -d 5: عمق زحف 5 مستويات (بدلاً من 3)
+    # -jc: تفعيل JavaScript crawling لاكتشاف الروابط الديناميكية
+    # -form: استخراج نماذج HTML تلقائياً
+    # -kf all: استخراج جميع أنواع المعلمات
+    # -timeout 30: مهلة أطول للصفحات البطيئة
     command = [
-        "katana", "-u", target, "-d", "3", "-silent", "-o", output_file
+        "katana", "-u", target, 
+        "-d", "5", 
+        "-jc", 
+        "-form", 
+        "-kf", "all",
+        "-timeout", "30",
+        "-silent", 
+        "-o", output_file
     ]
     
     try:
         subprocess.run(command, check=True, capture_output=False)
-        print(f"    [+] اكتمل زحف Katana بنجاح.")
+        print(f"    [+] Katana crawl completed.")
         
-        # قراءة الملف واستخراج الروابط التي تحتوي على معلمات (تحتوي على '?') فقط
         urls_with_params = []
         if os.path.exists(output_file):
             with open(output_file, 'r', encoding='utf-8') as f:
@@ -23,9 +34,9 @@ def run_katana(target, output_dir):
                     if '?' in line:
                         urls_with_params.append(line.strip())
         
-        print(f"    [+] تم اكتشاف {len(urls_with_params)} رابط يحتوي على معلمات قابلة للفحص.")
+        print(f"    [+] Discovered {len(urls_with_params)} URLs with query parameters.")
         return urls_with_params
         
     except subprocess.CalledProcessError as e:
-        print(f"    [-] فشل تشغيل Katana. تأكد من تثبيتها. الخطأ: {e}")
+        print(f"    [-] Katana failed. Ensure it is installed. Error: {e}")
         return []

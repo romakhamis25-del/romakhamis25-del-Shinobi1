@@ -2,27 +2,32 @@
 import subprocess
 import os
 
-def run_sqlmap(urls):
-    print("\n\033[1;36m[Pipeline - Stage 3] Launching Fast Anti-WAF Sqlmap Exploit Matrix...\033[0m")
+def run_sqlmap(urls_with_params, output_dir):
+    if not urls_with_params:
+        return
+        
+    output_file = os.path.join(output_dir, "sqlmap_log.txt")
+    print(f"    [*] بدء فحص حقن SQL المستهدف على {len(urls_with_params)} رابط...")
     
-    test_url = urls[0] if isinstance(urls, list) else urls
-    print(f"\033[1;34m[*] Pipeline Link Confirmed. Fast-Tracking Injection Target: {test_url}\033[0m")
+    # نفحص أول 3 روابط فقط لتوفير الوقت وتجنب الحظر، يمكنك إزالة الشريحة [:3] لفحص الكل
+    targets_to_scan = urls_with_params[:3] 
     
-    # تشغيل الفحص السريع والمكثف المخصص للعروض التقديمية:
-    # --level=2 --risk=1: فحص ذكي وسريع للمتغيرات الشائعة دون تضييع وقت
-    # --threads=5: تسريع إرسال الطلبات عبر 5 مسارات متوازية
-    # --timeout=5: إسقاط الطلبات البطيئة فوراً لعدم تجميد التيرمينال
-    subprocess.run([
-        "sqlmap", "-u", test_url, 
-        "--batch", 
-        "--level=2", 
-        "--risk=1", 
-        "--threads=5",
-        "--timeout=5",
-        "--random-agent", 
-        "--tamper=space2comment", 
-        "--output-dir=sqlmap_res", 
-        "--flush-session"
-    ], check=False)
-    
-    print("\033[1;32m[+] Fast Sqlmap high-intensity injection cycle finished successfully.\033[0m")
+    for url in targets_to_scan:
+        print(f"    [*] فحص: {url}")
+        command = [
+            "sudo", "sqlmap", "-u", url,
+            "--batch", "--level=2", "--risk=1",
+            "--threads=5", "--timeout=5",
+            "--random-agent", "--tamper=space2comment",
+            "--answers", "follow=N", # عدم متابعة التوجيهات تلقائياً لتوفير الوقت
+            "-o" # استخدام التحسينات الافتراضية
+        ]
+        
+        try:
+            # إعادة توجيه المخرجات إلى ملف السجل
+            with open(output_file, 'a') as log_file:
+                subprocess.run(command, stdout=log_file, stderr=subprocess.STDOUT, check=False)
+        except Exception as e:
+            print(f"    [-] حدث خطأ أثناء فحص {url}: {e}")
+            
+    print(f"    [+] اكتملت دورة فحص Sqlmap. السجلات محفوظة في: {output_file}")

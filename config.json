@@ -1,0 +1,15 @@
+{
+  "target_urls": ["https://example.com"],
+  "timeout": 15.0,
+  "max_concurrent": 5,
+  "rate_limit_delay": 1.5,
+  "user_agents": [],
+  "log_level": "INFO",
+  "ai_enabled": true,
+  "ai_model": "llama-3.1-70b-versatile",
+  "ai_endpoint": "https://api.groq.com/openai/v1",
+  "ai_api_key_env": "GROQ_API_KEY",
+  "output_dir": "reports",
+  "tools_enabled": ["katana", "nmap", "nuclei"],
+  "tools_timeout": 600
+}

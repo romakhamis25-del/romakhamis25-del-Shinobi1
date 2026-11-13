@@ -1,125 +1,187 @@
-#!/usr/bin/env python3
-import os
-import csv
+"""
+SHINOBI :: AICognitiveAnalyzer
+Simulates senior defensive analyst reasoning via LLM (OpenAI-compatible API).
+"""
+
+import asyncio
 import json
-import requests
-from datetime import datetime
+import logging
+import os
+import re
+from typing import Any, Dict, List, Optional
 
-def read_file_tail(filepath, lines=100):
-    """قراءة آخر جزء من الملف لتجنب تجاوز حدود الـ Tokens"""
-    if not os.path.exists(filepath):
-        return "No data available."
-    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-        return f.read()[-3000:] # قراءة آخر 3000 حرف فقط للتحليل
+import httpx
 
-def query_real_ai(nmap_data, nuclei_data, sqlmap_data):
-    """محاولة الاتصال بنموذج ذكاء اصطناعي حقيقي (Groq/Llama-3)"""
-    api_key = os.getenv("GIZO_AI_KEY", "")
-    
-    if not api_key:
-        return None # العودة للتحليل المحلي الذكي إذا لم يوجد مفتاح
+from config_parser import Finding
 
-    prompt = f"""You are Gizo, an elite AI Cybersecurity Analyst and ISO 27001 Lead Auditor. 
-    Analyze this raw scan data and provide a concise, professional executive summary.
-    
-    NMAP DATA: {nmap_data[-1000:]}
-    NUCLEI DATA: {nuclei_data[-1500:]}
-    SQLMAP DATA: {sqlmap_data[-1000:]}
-    
-    Output format:
-    1. Executive Summary (2 sentences max)
-    2. Critical Findings (Bullet points)
-    3. ISO 27001 Compliance Verdict (Compliant/Non-Compliant with specific control)
-    4. Immediate Remediation Steps
-    Keep it professional, technical, and in English.
-    """
 
-    try:
-        response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "llama3-8b-8192",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3
-            },
-            timeout=10
+SYSTEM_PROMPT = """You are a SENIOR DEFENSIVE SECURITY ANALYST with 15+ years of
+experience in blue-team operations, threat modeling, and ISO/IEC 27001:2022
+compliance auditing. You reason step-by-step, conservatively, and you NEVER
+recommend destructive actions.
+
+You will receive structured JSON findings from a defensive scanner. Respond
+ONLY with a valid JSON object (no markdown fences, no prose outside JSON)
+using this exact schema:
+
+{
+  "false_positives": [
+    {"finding_index": int, "reason": str}
+  ],
+  "correlated_risks": [
+    {
+      "title": str,
+      "affected_endpoints": [str],
+      "architectural_impact": str,
+      "confidence": "low|medium|high"
+    }
+  ],
+  "next_verification_steps": [
+    {"step": str, "rationale": str, "non_destructive": true}
+  ],
+  "iso_27001_mapping": [
+    {"control": "A.x.y", "control_name": str, "justification": str}
+  ],
+  "executive_summary": str
+}
+
+REASONING PROTOCOL (follow internally, do not output reasoning text):
+  Step 1 — Context analysis & false-positive filtering:
+    Discard findings caused by network errors (status_code=0), CDN default
+    headers, or duplicate gaps on redirected endpoints.
+  Step 2 — Architectural correlation:
+    Group findings that share infrastructure (same server header, same
+    redirect chain) to expose systemic misconfigurations.
+  Step 3 — Next verification:
+    Recommend only NON-DESTRUCTIVE checks.
+  Step 4 — ISO/IEC 27001:2022 mapping:
+    Map each confirmed risk to a real Annex A control.
+"""
+
+
+class AICognitiveAnalyzer:
+    def __init__(
+        self,
+        endpoint: str,
+        model: str = "llama-3.1-70b-versatile",
+        api_key_env: str = "GROQ_API_KEY",
+        timeout: float = 60.0,
+        max_retries: int = 2,
+    ):
+        self.endpoint = endpoint.rstrip("/")
+        self.model = model
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.logger = logging.getLogger("shinobi.ai")
+
+        api_key = os.getenv(api_key_env, "")
+        if not api_key:
+            self.logger.warning(
+                f"Env var '{api_key_env}' is empty — AI calls will likely 401."
+            )
+        self._headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _build_user_payload(self, findings: List[Finding]) -> str:
+        compact = []
+        for i, f in enumerate(findings):
+            compact.append({
+                "index": i,
+                "url": f.url,
+                "status": f.status_code,
+                "server": f.server,
+                "x_powered_by": f.powered_by,
+                "redirected": f.redirected,
+                "error": f.error,
+                "gaps": [
+                    {"header": g.header, "severity": g.severity, "iso": g.iso_control}
+                    for g in f.header_gaps
+                ],
+            })
+        return json.dumps(
+            {"findings": compact, "count": len(compact)},
+            ensure_ascii=False, indent=2,
         )
-        if response.status_code == 200:
-            return response.json()['choices'][0]['message']['content']
-    except Exception:
-        pass
-    return None
 
-def advanced_local_analysis(nmap_data, nuclei_data, sqlmap_data):
-    """محليل محلي ذكي جداً (Fallback) يولد تقريراً ديناميكياً بدون API"""
-    findings = []
-    iso_status = "Compliant (Initial Assessment)"
-    iso_control = "A.12.6.1 (Management of Technical Vulnerabilities)"
+    @staticmethod
+    def _extract_json(text: str) -> Dict[str, Any]:
+        text = text.strip()
+        fence = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+        if fence:
+            text = fence.group(1)
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError(f"No JSON object found: {text[:200]}")
+        return json.loads(text[start:end + 1])
 
-    # 1. تحليل Nmap
-    if "open" in nmap_data.lower():
-        if "22/tcp" in nmap_data: findings.append("- SSH service detected (Ensure key-based auth is enforced).")
-        if "80/tcp" in nmap_data or "443/tcp" in nmap_data: findings.append("- Web server detected (Verify latest patch levels).")
-    
-    # 2. تحليل Nuclei
-    if "vulnerability" in nuclei_data.lower() or "cve-" in nuclei_data.lower():
-        iso_status = "Non-Compliant - Immediate Action Required"
-        findings.append("- Nuclei detected known CVEs or misconfigurations. Review nuclei_report.txt immediately.")
-    
-    # 3. تحليل Sqlmap
-    if "vulnerable" in sqlmap_data.lower() or "is vulnerable" in sqlmap_data.lower():
-        iso_status = "Non-Compliant - Critical Risk"
-        findings.append("- CRITICAL: SQL Injection vulnerability confirmed by Sqlmap. Immediate code remediation required.")
+    async def _call_llm(self, user_payload: str) -> str:
+        body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_payload},
+            ],
+            "temperature": 0.2,
+            "max_tokens": 2048,
+        }
 
-    if not findings:
-        findings.append("- No critical vulnerabilities automatically detected in this scan.")
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            last_error: Optional[Exception] = None
+            for attempt in range(1, self.max_retries + 2):
+                try:
+                    r = await client.post(
+                        f"{self.endpoint}/chat/completions",
+                        headers=self._headers, json=body,
+                    )
+                    if r.status_code == 429 or r.status_code >= 500:
+                        wait = 2 ** attempt
+                        self.logger.warning(
+                            f"AI endpoint {r.status_code} — retry "
+                            f"{attempt}/{self.max_retries + 1} in {wait}s"
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+                    r.raise_for_status()
+                    data = r.json()
+                    return data["choices"][0]["message"]["content"]
 
-    summary = (
-        f"Gizo AI Automated Analysis:\n"
-        f"• Executive Summary: Target was scanned using SHINOBI 5-stage pipeline. "
-        f"Network mapping and vulnerability assessments were completed successfully.\n"
-        f"• Key Findings:\n" + "\n".join(findings) + "\n"
-        f"• ISO 27001 Verdict: {iso_status} under Control {iso_control}.\n"
-        f"• Remediation: Enforce input validation, update server packages, and review WAF rules."
-    )
-    return summary, iso_status
+                except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                    last_error = exc
+                    wait = 2 ** attempt
+                    self.logger.warning(
+                        f"AI network error ({type(exc).__name__}) — retry in {wait}s"
+                    )
+                    await asyncio.sleep(wait)
+                except httpx.HTTPStatusError as exc:
+                    self.logger.error(f"AI HTTP error: {exc}")
+                    raise
 
-def process_gizo_core(target, output_dir):
-    print("    [*] Activating Gizo AI Core for dynamic forensic analysis...")
-    
-    nmap_data = read_file_tail(os.path.join(output_dir, "nmap_scan.txt"))
-    nuclei_data = read_file_tail(os.path.join(output_dir, "nuclei_report.txt"))
-    sqlmap_data = read_file_tail(os.path.join(output_dir, "sqlmap_log.txt"))
-    
-    # محاولة استخدام الذكاء الاصطناعي الحقيقي
-    ai_response = query_real_ai(nmap_data, nuclei_data, sqlmap_data)
-    
-    if ai_response:
-        print("    [+] Real AI (Llama-3) analysis completed successfully.")
-        gizo_directive = ai_response
-        iso_status = "Non-Compliant" if "Non-Compliant" in ai_response else "Compliant"
-    else:
-        print("    [*] Using Advanced Heuristic AI Engine (No API Key detected)...")
-        gizo_directive, iso_status = advanced_local_analysis(nmap_data, nuclei_data, sqlmap_data)
+            raise RuntimeError(f"AI call failed after retries: {last_error}")
 
-    # حفظ التقرير
-    report_file = os.path.join(output_dir, f"SHINOBI_ISO27001_REPORT_{target.replace('.', '_')}.csv")
-    
-    with open(report_file, mode='w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow(["SHINOBI Intelligent Cognitive Penetration Test Report"])
-        writer.writerow(["Target", "Date", "ISO 27001 Status", "Gizo AI Dynamic Analysis"])
-        writer.writerow([target, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), iso_status, gizo_directive.replace('\n', ' | ')])
+    async def analyze_findings(self, findings: List[Finding]) -> Dict[str, Any]:
+        if not findings:
+            return {"executive_summary": "No findings to analyze."}
 
-    # حفظ نسخة نصية أجمل للقراءة
-    txt_report = os.path.join(output_dir, "GIZO_AI_ANALYSIS.txt")
-    with open(txt_report, 'w', encoding='utf-8') as f:
-        f.write(f"=== GIZO AI ANALYSIS FOR: {target} ===\n\n")
-        f.write(gizo_directive)
+        try:
+            user_payload = self._build_user_payload(findings)
+            raw = await self._call_llm(user_payload)
+            result = self._extract_json(raw)
 
-    print(f"    [+] AI Report generated: {txt_report}")
-    return report_file
+            required = {
+                "false_positives", "correlated_risks",
+                "next_verification_steps", "iso_27001_mapping",
+                "executive_summary",
+            }
+            missing = required - result.keys()
+            if missing:
+                self.logger.warning(f"AI response missing keys: {missing}")
+            return result
+
+        except json.JSONDecodeError as exc:
+            self.logger.error(f"AI returned invalid JSON: {exc}")
+            return {"error": "invalid_json", "raw_excerpt": str(exc)[:300]}
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error(f"AI analysis failed: {exc}")
+            return {"error": type(exc).__name__, "message": str(exc)}
